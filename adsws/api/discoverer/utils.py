@@ -8,7 +8,6 @@ from adsws.modules.oauth2server.provider import oauth2
 from urlparse import urljoin
 import traceback
 from importlib import import_module
-from adsws.ext.ratelimiter import ratelimit, scope_func, limit_func
 from flask.ext.consulate import ConsulService
 
 
@@ -45,15 +44,6 @@ def bootstrap_local_module(service_uri, deploy_path, app):
         else:
             attr_base = view
 
-        # Decorate the view with ratelimit
-        if hasattr(attr_base, 'rate_limit'):
-            d = attr_base.rate_limit[0]
-            view = ratelimit(
-                limit=lambda default=d, **kwargs: limit_func(default),
-                per=attr_base.rate_limit[1],
-                scope_func=lambda: scope_func(),
-                key_func=lambda: request.endpoint
-            )(view)
 
         # Decorate the view with require_oauth
         if hasattr(attr_base, 'scopes'):
@@ -107,22 +97,6 @@ def bootstrap_remote_service(service_uri, deploy_path, app):
     
     # discover the ratelimits/urls/permissions from the service itself;
     # if not available, use a cached values (if any)
-    try:
-        r = requests.get(url, timeout=5)
-        resource_json = r.json()
-        if cache_dir:
-            try:
-                with open(cache_path, 'w') as cf:
-                    cf.write(json.dumps(resource_json))
-            except IOError:
-                app.logger.error('Cant write cached resource {0}'.format(cache_path))
-    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):        
-        if cache_dir and os.path.exists(cache_path):
-            with open(cache_path, 'r') as cf:
-                resource_json = json.loads(cf.read())
-        else:
-            app.logger.info('Could not discover {0}'.format(service_uri))
-            return
         
 
 
@@ -151,17 +125,7 @@ def bootstrap_remote_service(service_uri, deploy_path, app):
                 continue
 
             view = proxyview.dispatcher
-            properties.setdefault('rate_limit', [1000, 86400])
             properties.setdefault('scopes', [])
-
-            # Decorate the view with ratelimit.
-            d = properties['rate_limit'][0]
-            view = ratelimit(
-                limit=lambda default=d, **kwargs: limit_func(default),
-                per=properties['rate_limit'][1],
-                scope_func=lambda: scope_func(),
-                key_func=lambda: request.endpoint,
-            )(view)
 
             # Decorate with the advertised oauth2 scopes
             view = oauth2.require_oauth(*properties['scopes'])(view)
